@@ -1,10 +1,12 @@
 name: Release
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (must match an existing GitHub Release tag)"
+        required: true
+        type: string
 
 permissions:
   attestations: write
@@ -37,22 +39,12 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      # A release tag is the version: both the mod version and the Fabric suffix come from it, so
-      # fabric.mod.json and the JAR name always match the tag exactly. The committed mod_version is
-      # only a development default. This project's own Gradle wrapper is normally driven through
-      # tools/gradle-en.cmd, which exists only for the restricted local sandbox; CI uses ./gradlew.
       - name: Build mod JAR
-        if: github.event_name == 'release'
         run: ./gradlew --no-daemon --stacktrace "-Pmod_version=${RELEASE_VERSION}" -Pfabric_version_suffix= build
         env:
-          RELEASE_VERSION: ${{ github.event.release.tag_name }}
-
-      - name: Build mod JAR (manual run)
-        if: github.event_name != 'release'
-        run: ./gradlew --no-daemon --stacktrace build
+          RELEASE_VERSION: ${{ inputs.release_version }}
 
       - name: Verify the mod JAR matches the tag
-        if: github.event_name == 'release'
         shell: bash
         run: |
           expected="build/libs/ic2-fabric-${RELEASE_VERSION}.jar"
@@ -61,34 +53,30 @@ jobs:
             ls -1 build/libs >&2
             exit 1
           fi
-          echo "Artifact ${expected} matches tag ${RELEASE_VERSION}."
+          echo "Artifact ${expected} matches version ${RELEASE_VERSION}."
         env:
-          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
 
       - name: Attest mod JAR
-        if: github.event_name == 'release'
         uses: actions/attest@v4
         with:
           subject-path: build/libs/ic2-fabric-*.jar
 
       - name: Create JAR checksum
-        if: github.event_name == 'release'
         shell: bash
         run: |
           cd build/libs
           sha256sum "ic2-fabric-${RELEASE_VERSION}.jar" > "ic2-fabric-${RELEASE_VERSION}.jar.sha256"
         env:
-          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
 
-      # withSourcesJar() also emits a -sources.jar; only the mod JAR and its checksum are published.
       - name: Add mod JAR and checksum to release
-        if: github.event_name == 'release'
         shell: bash
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "${RELEASE_VERSION}" \
             "build/libs/ic2-fabric-${RELEASE_VERSION}.jar" \
             "build/libs/ic2-fabric-${RELEASE_VERSION}.jar.sha256" \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
